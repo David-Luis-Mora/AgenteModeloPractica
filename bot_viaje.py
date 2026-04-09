@@ -23,8 +23,13 @@ class ContextClass:
 
 
 
-modelo = ChatOllama(model="qwen3:8b")
+# modelo = ChatOllama(model="qwen3:8b")
 
+
+modelo = ChatOllama(
+    model="gemma4:e4b",
+    base_url="http://192.168.117.48:11434"
+)
 
 
 
@@ -76,13 +81,9 @@ def recomendar_destinos_por_pais(pais,runtime):
     Devuelve una lista de destinos disponibles de un país.
     Úsala cuando el usuario pida recomendaciones o destinos de un país.
     """
-    if runtime.context is None:
-        return "Error: no se recibió el contexto del sistema."
-
-    try:
-        df = cargar_destinos(runtime.context.csv_path)
-    except Exception as e:
-        return f"Error leyendo destinos: {e}"
+    # if runtime.context is None:
+    #     return "Error: no se recibió el contexto del sistema."
+    df = cargar_destinos(runtime.context.csv_path)
 
     pais_norm = pais.strip().lower()
     filtrado = df[df["pais"].astype(str).str.strip().str.lower() == pais_norm]
@@ -123,6 +124,7 @@ def reservar_destino(
     """
     Reserva un destino para un número de personas y lo guarda en reservas.txt.
     Úsala solo cuando el usuario quiera confirmar una reserva real.
+    
     """
     if runtime.context is None:
         return "Error: no se recibió el contexto del sistema."
@@ -226,74 +228,70 @@ agente = create_agent(
 
 
 
-def main():
-    print("=== BOT DE VIAJES ===")
-    print("Escribe 'end' para salir.\n")
 
-    config = {
-        "configurable": {
-            "thread_id": "usuario_agencia_viajes"
-        }
-    }
+print("=== BOT DE VIAJES ===")
+print("Escribe 'end' para salir.\n")
 
-    contexto = ContextClass(
-        csv_path="destinos.csv",
-        reservas_path="reservas.txt"
+config = {
+"configurable": {
+    "thread_id": "usuario_agencia_viajes"
+}
+}
+
+contexto = ContextClass(
+csv_path="destinations.csv",
+reservas_path="reservas.txt"
     )
 
-    while (prompt := input("> ").strip()) != "end":
-        try:
-            for paso in agente.stream(
-                {
-                    "messages": [HumanMessage(prompt)]
-                },
-                stream_mode="values",
+while (prompt := input("> ").strip()) != "end":
+    for paso in agente.stream(
+        {
+            "messages": [HumanMessage(prompt)]
+        },
+        stream_mode="values",
+        config=config,
+        context=contexto
+    ):
+        ultimo_mensaje = paso["messages"][-1]
+
+        razonamiento = ""
+        if hasattr(ultimo_mensaje, "additional_kwargs"):
+            razonamiento = ultimo_mensaje.additional_kwargs.get("reasoning_content", "")
+
+        if razonamiento:
+            print("\n=== PENSANDO ===")
+            print(razonamiento)
+
+        print("\n=== MENSAJE ===")
+        ultimo_mensaje.pretty_print()
+
+        # Si hay interrupción HITL
+        if "__interrupt__" in paso:
+            print("\n=== HITL: RESERVA PENDIENTE DE APROBACIÓN ===")
+            decision = input("¿Aprobar reserva? (approve/reject): ").strip().lower()
+
+            if decision not in {"approve", "reject"}:
+                print("Decisión no válida. Se tomará como reject.")
+                decision = "reject"
+
+            respuesta = agente.invoke(
+                Command(
+                    resume={
+                        "decisions": [
+                            {
+                                "type": decision
+                            }
+                        ]
+                    }
+                ),
                 config=config,
                 context=contexto
-            ):
-                ultimo_mensaje = paso["messages"][-1]
+            )
 
-                razonamiento = ""
-                if hasattr(ultimo_mensaje, "additional_kwargs"):
-                    razonamiento = ultimo_mensaje.additional_kwargs.get("reasoning_content", "")
-
-                if razonamiento:
-                    print("\n=== PENSANDO ===")
-                    print(razonamiento)
-
-                print("\n=== MENSAJE ===")
-                ultimo_mensaje.pretty_print()
-
-                # Si hay interrupción HITL
-                if "__interrupt__" in paso:
-                    print("\n=== HITL: RESERVA PENDIENTE DE APROBACIÓN ===")
-                    decision = input("¿Aprobar reserva? (approve/reject): ").strip().lower()
-
-                    if decision not in {"approve", "reject"}:
-                        print("Decisión no válida. Se tomará como reject.")
-                        decision = "reject"
-
-                    respuesta = agente.invoke(
-                        Command(
-                            resume={
-                                "decisions": [
-                                    {
-                                        "type": decision
-                                    }
-                                ]
-                            }
-                        ),
-                        config=config,
-                        context=contexto
-                    )
-
-                    print("\n=== RESPUESTA FINAL ===")
-                    for msg in respuesta["messages"]:
-                        msg.pretty_print()
-
-        except Exception as e:
-            print(f"\n[ERROR] Ha ocurrido un problema: {e}")
+            print("\n=== RESPUESTA FINAL ===")
+            for msg in respuesta["messages"]:
+                msg.pretty_print()
 
 
-if __name__ == "__main__":
-    main()
+
+
